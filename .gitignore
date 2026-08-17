@@ -1,0 +1,5 @@
+logs/
+backup/
+*.log
+*.bak
+tools/SetTimerResolution.exe

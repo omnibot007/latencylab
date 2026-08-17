@@ -1,5 +1,6 @@
 logs/
 backup/
+backups/
 *.log
 *.bak
 tools/SetTimerResolution.exe

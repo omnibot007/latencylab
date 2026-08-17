@@ -1,38 +1,35 @@
 <#
 .SYNOPSIS
-    Apply ALL LatencyLab tweaks. Run as Administrator.
+    Apply ALL LatencyLab tweaks - ThinkPad P15 Gen 1 adapted edition.
 
 .DESCRIPTION
-    Applies every tweak in the LatencyLab pack:
-    - Timer resolution (SetTimerResolution + registry)
-    - CPU scheduler (Win32PrioritySeparation, PowerThrottling, MMCSS)
-    - GPU / NVIDIA (DisableDynamicPstate, MPO, VRR, telemetry, bloat)
-    - Network (I225-V RSS, AFD buffers, TCP, QoS shaper)
-    - USB / Controller (power management off, selective suspend off)
-    - Fortnite IFEO priority
-    - Windows telemetry / bloat / services
-    - Filesystem / memory
-    - Display / desktop / kill timeouts
-    - Background process management (boot task)
+    Adapted from the original LatencyLab (built for i9-13900KF + RTX 4070 + 500Hz + I225-V Ethernet)
+    for the ThinkPad P15 Gen 1 (i7-10750H 6C/12T + Quadro T1000 4GB + 60Hz 1080p + I219-V Ethernet).
+
+    SKIPPED tweaks (incompatible with this hardware):
+    - DisableDynamicPstate=1 (Quadro T1000 mobile single-fan - risks thermal throttling)
+    - GPU VRR latency keys (60Hz panel has no VRR support)
+    - nvlddmkm PipeOptimizationEnable (broken %MonitorAmount% variable in registry write)
+    - I225-V RSS registry keys (this machine has I219-V, not I225-V)
+    - Speed & Duplex 2.5 Gbps (I219-V is 1 Gbps)
+    - powercfg /h off (laptop needs hibernation - uses HiberbootEnabled=0 instead)
+    - BCD disabledynamictick (already set; MaxxTopia de-recommended for Win11 mouse desync)
+    - Wi-Fi disable (Wi-Fi is backup connection, keep available)
+    - E-core pinning (i7-10750H has no E-cores)
 
     After running, REBOOT to bind kernel, GPU, NIC, and USB changes.
 
 .PARAMETER UploadBandwidthMbps
-    Your upload bandwidth in Mbps. QoS shaper will be set to 90% of this.
-    Default: 18 (based on measured 20 Mbps). Run test-upload-speed.ps1 to measure.
-
-.PARAMETER DisableWifi
-    Disable the unused Wi-Fi adapter.
+    Your upload bandwidth in Mbps. QoS shaper will be set to this value.
+    Default: 10 (Comcast measured). Run test-upload-speed.ps1 to measure.
 
 .EXAMPLE
     .\apply.ps1
-    .\apply.ps1 -UploadBandwidthMbps 25
-    .\apply.ps1 -DisableWifi
+    .\apply.ps1 -UploadBandwidthMbps 12
 #>
 [CmdletBinding()]
 param(
-    [int]$UploadBandwidthMbps = 18,
-    [switch]$DisableWifi
+    [int]$UploadBandwidthMbps = 10
 )
 
 $ErrorActionPreference = 'Continue'
@@ -54,7 +51,7 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 if (-not $admin) { Write-Host "ERROR: Run as Administrator" -ForegroundColor Red; exit 1 }
 
 Write-Host "`n$bar" -ForegroundColor Cyan
-Write-Host ' LatencyLab — Apply ALL Tweaks' -ForegroundColor Cyan
+Write-Host ' LatencyLab - Apply ALL Tweaks' -ForegroundColor Cyan
 Write-Host $bar -ForegroundColor Cyan
 
 # === 1. TIMER RESOLUTION ===
@@ -72,7 +69,8 @@ Step "CoalescingTimerInterval=0 (all paths)" {
         Set-Reg $_ 'CoalescingTimerInterval' 0
     }
 }
-Step "BCD disabledynamictick=yes" { bcdedit /set disabledynamictick yes | Out-Null }
+# BCD disabledynamictick - SKIP (already set; MaxxTopia de-recommended for Win11 mouse desync)
+Write-Host "  [SKIP] BCD disabledynamictick (already set, MaxxTopia de-recommended)" -ForegroundColor DarkGray
 
 # === 2. CPU SCHEDULER ===
 Write-Host "`n=== 2. CPU SCHEDULER ===" -ForegroundColor Yellow
@@ -90,16 +88,16 @@ Get-ChildItem $nvClass -EA SilentlyContinue | ForEach-Object {
     $desc = (Get-ItemProperty $_.PSPath -Name 'DriverDesc' -EA SilentlyContinue).DriverDesc
     if ($desc -like '*NVIDIA*') { $script:nvKey = $_.PSPath }
 }
-Step "DisableDynamicPstate=1" { Set-Reg $nvKey 'DisableDynamicPstate' 1 }
+# DisableDynamicPstate - SKIP (Quadro T1000 mobile single-fan, risks thermal throttling)
+Write-Host "  [SKIP] DisableDynamicPstate (Quadro T1000 mobile - thermal risk)" -ForegroundColor DarkGray
 Step "RmGpsPsEnablePerCpuCoreDpc=1" { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'RmGpsPsEnablePerCpuCoreDpc' 1 }
 Step "GpuEnergyDrv disabled" { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\GpuEnergyDrv' 'Start' 4 }
 Step "MPO disabled (OverlayTestMode=5)" { Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\Dwm' 'OverlayTestMode' 5 }
 Step "VsyncIdleTimeout=0" { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler' 'VsyncIdleTimeout' 0 }
-Step "GPU VRR latency keys" {
-    $vrrKeys = @('LOWLATENCY','Node3DLowLatency','D3PCLatency','TransitionLatency','vrrCursorMarginUs','vrrDeflickerMarginUs','vrrDeflickerMaxUs')
-    foreach ($k in $vrrKeys) { Set-Reg $nvKey $k 1 }
-}
-Step "nvlddmkm PipeOptimization=1" { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\nvlddmkm' 'Display%MonitorAmount%_PipeOptimizationEnable' 1 }
+# GPU VRR latency keys - SKIP (60Hz panel has no VRR support)
+Write-Host "  [SKIP] GPU VRR latency keys (60Hz panel, no VRR)" -ForegroundColor DarkGray
+# nvlddmkm PipeOptimization - SKIP (broken: %MonitorAmount% not expanded in registry write)
+Write-Host "  [SKIP] nvlddmkm PipeOptimization (broken %MonitorAmount% variable)" -ForegroundColor DarkGray
 Step "NVIDIA telemetry registry=0" {
     $fts = 'HKLM:\SOFTWARE\NVIDIA Corporation\Global\FTS'
     if (Test-Path $fts) {
@@ -108,29 +106,21 @@ Step "NVIDIA telemetry registry=0" {
     Set-Reg 'HKLM:\SOFTWARE\NVIDIA Corporation\NvControlPanel2\Client' 'OptInOrOutPreference' 0
 }
 
-# === 4. NETWORK (I225-V) ===
-Write-Host "`n=== 4. NETWORK (Intel I225-V) ===" -ForegroundColor Yellow
+# === 4. NETWORK (I219-V Ethernet - adapted from I225-V) ===
+Write-Host "`n=== 4. NETWORK (Intel I219-V Ethernet) ===" -ForegroundColor Yellow
 $netClass = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
-Step "I225-V RSS registry keys" {
-    Get-ChildItem $netClass -EA SilentlyContinue | ForEach-Object {
-        $desc = (Get-ItemProperty $_.PSPath -Name 'DriverDesc' -EA SilentlyContinue).DriverDesc
-        if ($desc -like '*I225*') {
-            Set-ItemProperty $_.PSPath -Name '*RSS' -Value '1' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*NumRssQueues' -Value '4' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*RSSProfile' -Value '4' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*RssBaseProcNumber' -Value '0' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*MaxRssProcessors' -Value '4' -Type String -Force
-        }
-    }
-}
-Step "Set-NetAdapterRSS" {
-    $adapter = Get-NetAdapter | Where-Object { $_.InterfaceDescription -like '*I225*' -and $_.Status -eq 'Up' } | Select-Object -First 1
+# I225-V RSS registry keys - SKIP (this machine has I219-V, not I225-V)
+Write-Host "  [SKIP] I225-V RSS registry keys (wrong chip - I219-V)" -ForegroundColor DarkGray
+Step "Set-NetAdapterRSS (Ethernet, any Intel)" {
+    $adapter = Get-NetAdapter | Where-Object { $_.Name -eq 'Ethernet' -and $_.Status -eq 'Up' } | Select-Object -First 1
     if ($adapter) { Set-NetAdapterRSS -Name $adapter.Name -Enabled $true -NumberOfReceiveQueues 4 -Profile NUMAStatic -EA Stop }
 }
 Step "NIC Interrupt Moderation=Disabled" { Set-NetAdapterAdvancedProperty -Name Ethernet -RegistryKeyword '*InterruptModeration' -RegistryValue 0 -NoRestart -EA SilentlyContinue }
 Step "NIC Flow Control=Disabled" { Set-NetAdapterAdvancedProperty -Name Ethernet -RegistryKeyword '*FlowControl' -RegistryValue 0 -NoRestart -EA SilentlyContinue }
-Step "NIC Receive Buffers=1024" { Set-NetAdapterAdvancedProperty -Name Ethernet -RegistryKeyword 'ReceiveBuffers' -RegistryValue 1024 -NoRestart -EA SilentlyContinue }
-Step "NIC Transmit Buffers=1024" { Set-NetAdapterAdvancedProperty -Name Ethernet -RegistryKeyword 'TransmitBuffers' -RegistryValue 1024 -NoRestart -EA SilentlyContinue }
+Step "NIC Receive Buffers=1024" { Set-NetAdapterAdvancedProperty -Name Ethernet -RegistryKeyword '*ReceiveBuffers' -RegistryValue 1024 -NoRestart -EA Stop }
+Step "NIC Transmit Buffers=1024" { Set-NetAdapterAdvancedProperty -Name Ethernet -RegistryKeyword '*TransmitBuffers' -RegistryValue 1024 -NoRestart -EA Stop }
+# Speed & Duplex 2.5 Gbps - SKIP (I219-V is 1 Gbps, not 2.5 Gbps)
+Write-Host "  [SKIP] Speed & Duplex 2.5 Gbps (I219-V is 1 Gbps)" -ForegroundColor DarkGray
 Step "Wake on LAN disabled" { Set-NetAdapterPowerManagement -Name Ethernet -WakeOnMagicPacket Disabled -WakeOnPattern Disabled -EA SilentlyContinue }
 Step "Global RSC disabled" { Set-NetOffloadGlobalSetting -ReceiveSegmentCoalescing Disabled -EA SilentlyContinue }
 Step "Psched TimerResolution=1" { Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched' 'TimerResolution' 1 }
@@ -138,7 +128,8 @@ Step "TCP InitialRto=1000ms" {
     Set-NetTCPSetting -SettingName InternetCustom -InitialRtoMs 1000 -EA SilentlyContinue
     Set-NetTCPSetting -SettingName Internet -InitialRtoMs 1000 -EA SilentlyContinue
 }
-if ($DisableWifi) { Step "Disable Wi-Fi adapter" { Disable-NetAdapter -Name 'Wi-Fi' -Confirm:$false -EA Stop } }
+# Wi-Fi disable - SKIP (keep Wi-Fi as backup connection)
+Write-Host "  [SKIP] Wi-Fi disable (kept as backup connection)" -ForegroundColor DarkGray
 
 # === 5. AFD / WINSOCK / TCP REGISTRY ===
 Write-Host "`n=== 5. AFD / WINSOCK / TCP ===" -ForegroundColor Yellow
@@ -243,7 +234,9 @@ Step "SilentInstalledAppsEnabled=0" { Set-Reg 'HKCU:\Software\Microsoft\Windows\
 Step "Fault Tolerant Heap disabled" { Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FTH' 'Enabled' 0 }
 Step "WerSvc disabled" { Stop-Service WerSvc -Force -EA SilentlyContinue; Set-Service WerSvc -StartupType Disabled -EA Stop }
 Step "TrkWks disabled" { Stop-Service TrkWks -Force -EA SilentlyContinue; Set-Service TrkWks -StartupType Disabled -EA Stop }
-Step "Hibernation off" { powercfg /h off }
+# Hibernation off - SKIP (laptop needs hibernation). Use Fast Startup off instead.
+Write-Host "  [SKIP] powercfg /h off (laptop - keeping hibernation)" -ForegroundColor DarkGray
+Step "Fast Startup off (HiberbootEnabled=0)" { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0 }
 Step "Remote Assistance disabled" {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowFullControl' 0
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowToGetHelp' 0
@@ -366,7 +359,7 @@ Step "Register LatencyLab-Boot task" {
     Register-ScheduledTask -TaskName 'LatencyLab-Boot' -Action $act -Trigger $trg -Principal $pri -Settings $set -Description 'LatencyLab: re-asserts tweaks at logon + background affinity watcher' -EA Stop | Out-Null
 }
 
-# Timer resolution task
+# Timer resolution task - SKIP on ThinkPad (SetTimerResolution.exe not present, and 60Hz doesn't need 0.5ms timer)
 $timerExe = Join-Path $PSScriptRoot 'tools\SetTimerResolution.exe'
 if (Test-Path $timerExe) {
     Step "Register LatencyLab-TimerResolution task" {
@@ -379,8 +372,7 @@ if (Test-Path $timerExe) {
         Start-ScheduledTask -TaskName 'LatencyLab-TimerResolution' -EA SilentlyContinue
     }
 } else {
-    Write-Host "  [SKIP] SetTimerResolution.exe not found in tools\ - timer task not registered" -ForegroundColor DarkGray
-    Write-Host "         Download it and place at: $timerExe" -ForegroundColor DarkGray
+    Write-Host "  [SKIP] SetTimerResolution.exe not found - 60Hz panel doesn't need 0.5ms timer" -ForegroundColor DarkGray
 }
 
 # === SUMMARY ===
@@ -390,3 +382,5 @@ Write-Host " REBOOT REQUIRED for kernel, GPU, NIC, USB, and timer changes." -For
 Write-Host " After reboot, run verify.ps1 to confirm everything." -ForegroundColor Yellow
 Write-Host " Then run set-fortnite-config.ps1 (with Fortnite closed)." -ForegroundColor Yellow
 Write-Host $bar -ForegroundColor Cyan
+
+

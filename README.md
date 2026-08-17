@@ -1,25 +1,57 @@
-# LatencyLab — Windows + Fortnite Latency Optimization Pack
+# LatencyLab - Windows + Fortnite Latency Optimization Pack
 
 Complete, evidence-based Windows 10 + Fortnite latency and performance optimization.
-Tested on a specific high-end desktop (see Hardware below). Every tweak is documented
-with what it does, why it helps, and whether it was measured or is theoretical.
+Every tweak is documented with what it does, why it helps, and whether it was measured
+or is theoretical.
 
 **All changes are reversible.** Run `revert.ps1` to undo everything.
 
-## Hardware (tested machine)
+## Supported hardware
 
-| Component | Value |
+This pack has been adapted for TWO machines. The scripts auto-detect and skip
+tweaks that don't apply to your hardware.
+
+| Component | Original (desktop) | ThinkPad P15 Gen 1 (laptop) |
+|---|---|---|
+| OS | Windows 10 Home, build 19045 | Windows 10 Pro, build 19045 |
+| CPU | Intel Core i9-13900KF (8P + 16E, 32 threads) | Intel Core i7-10750H (6P, 12 threads) |
+| GPU | NVIDIA GeForce RTX 4070 (200W stock) | NVIDIA Quadro T1000 4GB (mobile, single-fan) |
+| RAM | 32 GB | 32 GB |
+| Monitor | MSI MPG 271Q X50 QD-OLED, 500 Hz | Lenovo LEN4183, 60 Hz, 1920x1080 |
+| NIC | Intel Ethernet Controller I225-V, 2.5 Gbps | Intel Ethernet Connection (11) I219-V, 1 Gbps |
+| Wi-Fi | Intel AX211 (disabled - unused) | Intel Wi-Fi 6 AX201 (kept as backup) |
+| Upload | ~20 Mbps | ~10 Mbps (Comcast) |
+
+### ThinkPad-specific adaptations
+
+The following tweaks are SKIPPED on the ThinkPad because they are incompatible
+or dangerous on that hardware:
+
+| Tweak | Why skipped |
 |---|---|
-| OS | Windows 10 Home, build 19045 |
-| CPU | Intel Core i9-13900KF (8P + 16E, 32 threads) |
-| GPU | NVIDIA GeForce RTX 4070 (200W stock) |
-| RAM | 32 GB |
-| Monitor | MSI MPG 271Q X50 QD-OLED, 500 Hz |
-| Controller | GameSir G7 Pro (Xbox/XInput mode, ~1000 Hz) |
-| NIC | Intel Ethernet Controller I225-V, 2.5 Gbps |
-| Wi-Fi | Intel AX211 (disabled — unused) |
-| NVIDIA Driver | 610.88 |
-| Upload Bandwidth | ~20 Mbps (measured via Cloudflare speed test) |
+| `DisableDynamicPstate=1` | Quadro T1000 mobile single-fan - risks thermal throttling |
+| GPU VRR latency keys | 60Hz panel has no VRR support |
+| `nvlddmkm PipeOptimizationEnable` | Broken `%MonitorAmount%` variable in registry write |
+| I225-V RSS registry keys | Wrong chip - this machine has I219-V |
+| Speed & Duplex 2.5 Gbps | I219-V is 1 Gbps, not 2.5 Gbps |
+| `powercfg /h off` | Laptop needs hibernation - uses `HiberbootEnabled=0` instead |
+| BCD `disabledynamictick` | Already set; MaxxTopia de-recommended for mouse desync |
+| Wi-Fi disable | Wi-Fi is backup connection, keep available |
+| E-core pinning | i7-10750H has no E-cores (6P/12T only) |
+| SetTimerResolution.exe | 60Hz panel doesn't need 0.5ms timer |
+| Fortnite Reflex On+Boost | Single-fan Quadro T1000 thermal limit - use Reflex On instead |
+| Fortnite 1600x900 render | Panel is 1920x1080 native - render at native |
+
+### ThinkPad Fortnite config
+
+The ThinkPad edition of `set-fortnite-config.ps1` sets:
+- 1920x1080 @ 100% (native, no upscale)
+- Performance Mode (es31)
+- All low settings except View Distance (Epic)
+- Audio Quality Low
+- Lobby FPS cap 60
+- VSync off, Motion Blur off, HDR off
+- Does NOT touch FrameRateLimit or LatencyTweak2 (user's choice)
 
 ## Quick start
 

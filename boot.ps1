@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-    LatencyLab boot script — runs at every logon via scheduled task.
-    Re-asserts registry tweaks and manages background process affinity.
+    LatencyLab boot script - ThinkPad P15 Gen 1 adapted edition.
+    Runs at every logon via scheduled task.
+    Re-asserts registry tweaks (no E-core pinning - i7-10750H has no E-cores).
 
 .DESCRIPTION
     Registered by apply.ps1 as 'LatencyLab-Boot' scheduled task.
@@ -11,16 +12,21 @@
       * Re-asserts all registry tweaks (Windows/driver updates can reset them)
       * Re-disables telemetry scheduled tasks
       * Disables NVIDIA bloat directories (when files aren't in use)
-      * Starts timer resolution task if not running
-      * Pins background processes to E-cores
 
     ON FORTNITE LAUNCH (auto-detected):
       * Closes Spotify
-      * Tightens affinity loop to 5s
-      * Monitors downlink saturation
+      * Tightens monitoring loop to 5s
 
     ON FORTNITE EXIT:
       * Relaxes loop to 15s
+
+    ADAPTED FROM ORIGINAL:
+      - Removed E-core affinity pinning (i7-10750H has 6P/12T, no E-cores)
+      - QoS shaper set to 10 Mbps (Comcast, not 18 Mbps)
+      - Removed DisableDynamicPstate re-assert (thermal risk on Quadro T1000)
+      - Removed VRR latency keys re-assert (60Hz panel, no VRR)
+      - Removed nvlddmkm PipeOptimization re-assert (broken %MonitorAmount%)
+      - Removed I225-V RSS re-assert (wrong chip, I219-V)
 #>
 $ErrorActionPreference = 'Continue'
 $log = "$env:LOCALAPPDATA\LatencyLab\logs\boot.log"
@@ -62,39 +68,21 @@ try {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' 'CoalescingTimerInterval' 0
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control' 'CoalescingTimerInterval' 0
 
-    # GPU
+    # GPU (adapted: no DisableDynamicPstate, no VRR keys, no nvlddmkm PipeOptimization)
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\Dwm' 'OverlayTestMode' 5
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\GpuEnergyDrv' 'Start' 4
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'RmGpsPsEnablePerCpuCoreDpc' 1
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler' 'VsyncIdleTimeout' 0
-    $nvClass = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
-    Get-ChildItem $nvClass -EA SilentlyContinue | ForEach-Object {
-        $desc = (Get-ItemProperty $_.PSPath -Name 'DriverDesc' -EA SilentlyContinue).DriverDesc
-        if ($desc -like '*NVIDIA*') {
-            Set-Reg $_.PSPath 'DisableDynamicPstate' 1
-            foreach ($k in 'LOWLATENCY','Node3DLowLatency','D3PCLatency','TransitionLatency','vrrCursorMarginUs','vrrDeflickerMarginUs','vrrDeflickerMaxUs') { Set-Reg $_.PSPath $k 1 }
-        }
-    }
-    Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\nvlddmkm' 'Display%MonitorAmount%_PipeOptimizationEnable' 1
     $fts = 'HKLM:\SOFTWARE\NVIDIA Corporation\Global\FTS'
     if (Test-Path $fts) { Set-Reg $fts 'EnableRID44231' 0; Set-Reg $fts 'EnableRID64640' 0; Set-Reg $fts 'EnableRID66610' 0 }
 
-    # Network — RSS for I225-V
-    $netClass = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
-    Get-ChildItem $netClass -EA SilentlyContinue | ForEach-Object {
-        $desc = (Get-ItemProperty $_.PSPath -Name 'DriverDesc' -EA SilentlyContinue).DriverDesc
-        if ($desc -like '*I225*') {
-            Set-ItemProperty $_.PSPath -Name '*RSS' -Value '1' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*NumRssQueues' -Value '4' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*RSSProfile' -Value '4' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*RssBaseProcNumber' -Value '0' -Type String -Force
-            Set-ItemProperty $_.PSPath -Name '*MaxRssProcessors' -Value '4' -Type String -Force
-        }
-    }
+    # Network - RSS for I219-V (adapted: use cmdlet, not I225-V registry keys)
+    $ethAdapter = Get-NetAdapter | Where-Object { $_.Name -eq 'Ethernet' -and $_.Status -eq 'Up' } | Select-Object -First 1
+    if ($ethAdapter) { Set-NetAdapterRSS -Name $ethAdapter.Name -Enabled $true -NumberOfReceiveQueues 4 -Profile NUMAStatic -EA SilentlyContinue }
 
-    # QoS shaper
+    # QoS shaper - 10 Mbps (Comcast, adapted from 18 Mbps)
     Remove-NetQosPolicy -Name 'FN-UploadShaper' -PolicyStore 'localhost' -Confirm:$false -EA SilentlyContinue
-    New-NetQosPolicy -Name 'FN-UploadShaper' -Default -ThrottleRateActionBitsPerSecond 18000000 -PolicyStore 'localhost' -EA SilentlyContinue | Out-Null
+    New-NetQosPolicy -Name 'FN-UploadShaper' -Default -ThrottleRateActionBitsPerSecond 10000000 -PolicyStore 'localhost' -EA SilentlyContinue | Out-Null
 
     # AFD / TCP
     $afd = 'HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters'
@@ -189,28 +177,14 @@ try {
     if (Test-Path $nt) { Rename-Item $nt -NewName 'NvTelemetry.disabled' -Force -EA SilentlyContinue }
 } catch { Log "NVIDIA bloat disable FAILED: $($_.Exception.Message)" }
 
-# --- Background affinity watcher ---
-# E-cores = logical 16-31 on i9-13900KF. Adjust for your CPU.
-# 0xFFFF0000 as signed Int64 for PowerShell.
-$E_CORES = [IntPtr][int64]4294901760
-
-$targets = @(
-    'Discord','discord_clips','DiscordSystemHelper','Spotify','Notion',
-    'steam','steamwebhelper','steamservice','EpicWebHelper','Voicemod',
-    'antimicrox','msedge','chrome','firefox','RtkAudUService64',
-    'SearchIndexer','OneDrive','RustDesk'
-)
-
-# NEVER pin these — display pipeline, audio, controller, or focus-stealing
-$NEVER_PIN = @(
-    'nvcontainer','NVDisplay.Container','nvsphelper64','NVIDIA Share','NVIDIA Web Helper',
-    'nvcplui','nvtelemetrycontainer','dwm','audiodg','csrss','winlogon','explorer',
-    'GameInputSvc','GameInputRedistService','EpicGamesLauncher'
-)
-$targets = $targets | Where-Object { $NEVER_PIN -notcontains $_ }
+# --- Fortnite launch watcher (adapted: no E-core pinning, i7-10750H has no E-cores) ---
+# On the original i9-13900KF machine, background processes were pinned to E-cores
+# (logical 16-31) to keep P-cores free for Fortnite. The i7-10750H has 6P/12T with
+# no E-cores, so pinning would reduce available cores for the game. Instead, we
+# just close Spotify on Fortnite launch and monitor.
 
 $GAME = 'FortniteClient-Win64-Shipping'
-Log "watcher start (targets=$($targets.Count))"
+Log 'watcher start (Fortnite launch detection only, no E-core pinning)'
 $inGame = $false; $interval = 15
 
 while ($true) {
@@ -219,18 +193,12 @@ while ($true) {
         $inGame = $true; $interval = 5
         Log 'FORTNITE DETECTED -> game mode on'
         $sp = Get-Process Spotify -EA SilentlyContinue
-        if ($sp) { $sp | Stop-Process -Force -EA SilentlyContinue; Log "closed Spotify" }
+        if ($sp) { $sp | Stop-Process -Force -EA SilentlyContinue; Log 'closed Spotify' }
     } elseif (-not $running -and $inGame) {
         $inGame = $false; $interval = 15
         Log 'Fortnite exited -> game mode off'
     }
-
-    # Pin background processes to E-cores
-    $n = 0
-    foreach ($p in (Get-Process -EA SilentlyContinue | Where-Object { $targets -contains $_.Name })) {
-        if ($p.ProcessorAffinity -ne $E_CORES) { try { $p.ProcessorAffinity = $E_CORES; $n++ } catch {} }
-    }
-    if ($n -gt 0) { Log "pinned $n process(es) to E-cores" }
-
     Start-Sleep -Seconds $interval
 }
+
+
